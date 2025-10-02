@@ -2,7 +2,7 @@
 
 NanoFig is a powerful web application that uses generative AI to transform your images and ideas into stunning, professional-quality figurine and box art concepts. Upload a base image, describe your subject, and use a rich set of tools to customize every detail of your creation.
 
-![NanoFig Application Screenshot](https://storage.googleapis.com/aistudio-project-marketplace-public/project_nanofig/screenshot_updated.png)
+![NanoFig Application Screenshot](https://i.imgur.com/LwsuSAl.jpeg)
 
 ## ✨ Key Features
 
