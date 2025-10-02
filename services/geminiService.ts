@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Modality, GenerateContentResponse, HarmCategory, HarmBlockThreshold } from "@google/genai";
 
 // Ensure the API key is available. In a real app, you might want to handle this more gracefully.
@@ -40,7 +41,7 @@ export const transformImage = async (dataUrl: string, prompt: string): Promise<s
         const mimeType = mimeTypeMatch[1];
         
         const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image-preview',
+            model: 'gemini-2.5-flash-image',
             contents: {
                 parts: [
                     {
@@ -54,10 +55,11 @@ export const transformImage = async (dataUrl: string, prompt: string): Promise<s
                     },
                 ],
             },
+            // FIX: Moved `safetySettings` inside the `config` object as it is a configuration parameter.
             config: {
                 responseModalities: [Modality.IMAGE, Modality.TEXT],
+                safetySettings: safetySettings,
             },
-            safetySettings: safetySettings,
         });
 
         // First, check for a valid generated image.
@@ -86,7 +88,7 @@ export const transformImage = async (dataUrl: string, prompt: string): Promise<s
                 case 'IMAGE_SAFETY':
                     errorMessage = 'Image generation was blocked due to safety policies. Please modify your prompt or image and try again.';
                     break;
-                case 'IMAGE_OTHER':
+                // FIX: Removed 'IMAGE_OTHER' as it is not a valid FinishReason type.
                 case 'OTHER':
                     errorMessage = 'The model could not generate an image for this request. This can happen with unusual prompts or images. Please try modifying your settings or using a different photo.';
                     break;

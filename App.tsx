@@ -4,7 +4,7 @@ import { fileToDataUrl, dataUrlToBlob, svgDataUrlToPngDataUrl } from './utils/fi
 import ImageUploader from './components/ImageUploader';
 import ImagePreview from './components/ImagePreview';
 import Button from './components/Button';
-import { DownloadIcon, ShareIcon, SparklesIcon, RecycleIcon, TrashIcon, MagicWandIcon, CropIcon, XMarkIcon, UndoIcon, RedoIcon, AdjustmentsHorizontalIcon, LoadingSpinnerIcon, QuestionMarkCircleIcon } from './components/Icons';
+import { DownloadIcon, ShareIcon, SparklesIcon, RecycleIcon, TrashIcon, MagicWandIcon, CropIcon, XMarkIcon, UndoIcon, RedoIcon, AdjustmentsHorizontalIcon, LoadingSpinnerIcon, QuestionMarkCircleIcon, PhotoIcon } from './components/Icons';
 import HistoryModal from './components/HistoryModal';
 import Logo from './components/Logo';
 import ImageCropper from './components/ImageCropper';
@@ -221,7 +221,6 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   
-  // State for settings with undo/redo history
   const { 
     state: settings, 
     setState: setSettings, 
@@ -233,30 +232,25 @@ const App: React.FC = () => {
   
   const [history, setHistory] = useState<string[]>([]);
   
-  // State for presets
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetName, setPresetName] = useState<string>('');
+  const [saveConfirmation, setSaveConfirmation] = useState<string | null>(null);
+  const saveConfirmTimeoutRef = useRef<number | null>(null);
 
-  // State for modals
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
   const [editorImageSrc, setEditorImageSrc] = useState<string | null>(null);
 
-  // State for image cropper
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
   
-  // State for auto-saved draft
   const [isDraftAvailable, setIsDraftAvailable] = useState(false);
   const autosaveTimeoutRef = useRef<number | null>(null);
 
-  // State for mobile sidebar
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // State for prompt examples popover
   const [isPromptHelpVisible, setIsPromptHelpVisible] = useState(false);
   const promptHelpRef = useRef<HTMLDivElement>(null);
 
-  // Close prompt help popover on outside click
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
         if (promptHelpRef.current && !promptHelpRef.current.contains(event.target as Node)) {
@@ -269,20 +263,20 @@ const App: React.FC = () => {
     };
   }, [promptHelpRef]);
 
-
-  // Load data from local storage on initial render
   useEffect(() => {
     try {
       const savedPresets = localStorage.getItem('nanoFigPresets');
+      const sortFn = (a: Preset, b: Preset) => a.name.localeCompare(b.name);
+      
       if (savedPresets) {
         const parsedPresets = JSON.parse(savedPresets);
         if (Array.isArray(parsedPresets) && parsedPresets.length > 0) {
-          setPresets(parsedPresets);
+          setPresets(parsedPresets.sort(sortFn));
         } else {
-          setPresets(defaultPresets);
+          setPresets(defaultPresets.sort(sortFn));
         }
       } else {
-        setPresets(defaultPresets);
+        setPresets(defaultPresets.sort(sortFn));
       }
 
       const savedDraft = localStorage.getItem('nanoFigDraft');
@@ -295,7 +289,6 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Save presets to local storage whenever they change
   useEffect(() => {
     try {
       localStorage.setItem('nanoFigPresets', JSON.stringify(presets));
@@ -304,38 +297,17 @@ const App: React.FC = () => {
     }
   }, [presets]);
 
-  // Auto-save generation settings to a draft
   useEffect(() => {
     if (isLoading) return;
-
-    if (autosaveTimeoutRef.current) {
-        clearTimeout(autosaveTimeoutRef.current);
-    }
-    
+    if (autosaveTimeoutRef.current) clearTimeout(autosaveTimeoutRef.current);
     autosaveTimeoutRef.current = window.setTimeout(() => {
-      // Avoid saving default/empty state as a draft
-      const isDefaultState = 
-          settings.prompt === '' &&
-          settings.scale === '1/7' &&
-          settings.environment === '' &&
-          settings.pose === '' &&
-          settings.lighting === '' &&
-          settings.negativePrompt === '' &&
-          settings.artStyle === '' &&
-          settings.modifier === '' &&
-          settings.enhancementLevel === 'Standard';
-
+      const isDefaultState = JSON.stringify(settings) === JSON.stringify(initialSettings);
       if (!isDefaultState) {
         localStorage.setItem('nanoFigDraft', JSON.stringify(settings));
         setIsDraftAvailable(true);
       }
     }, 1500);
-
-    return () => {
-        if (autosaveTimeoutRef.current) {
-            clearTimeout(autosaveTimeoutRef.current);
-        }
-    };
+    return () => { if (autosaveTimeoutRef.current) clearTimeout(autosaveTimeoutRef.current); };
   }, [settings, isLoading]);
 
   const handleClearDraft = useCallback(() => {
@@ -343,610 +315,362 @@ const App: React.FC = () => {
     setIsDraftAvailable(false);
   }, []);
 
-  const handleImageUpload = useCallback(async (file: File) => {
-    setError(null);
-    setTransformedImage(null);
-    try {
-      const dataUrl = await fileToDataUrl(file);
-      setOriginalImage(dataUrl);
-    } catch (err) {
-      setError('Failed to read the image file. Please try another one.');
-      console.error(err);
-    }
-  }, []);
-
-  const handleSelectPlaceholder = useCallback(async (placeholder: Placeholder) => {
-    setError(null);
-    setTransformedImage(null);
-    try {
-      // The Gemini API doesn't support SVG, so we convert it to PNG on the fly.
-      const pngDataUrl = await svgDataUrlToPngDataUrl(placeholder.src);
-      setOriginalImage(pngDataUrl);
-      const newSettings = { ...initialSettings, ...placeholder.settings };
-      setSettings(newSettings);
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
-      console.error('Failed to convert placeholder image:', errorMessage);
-      setError('Could not load the selected example.');
-    }
-  }, [setSettings]);
-
-  const handleTransform = useCallback(async () => {
-    if (!originalImage) {
-      setError('Please upload an image first.');
-      return;
-    }
-    setIsLoading(true);
-    setError(null);
-    setTransformedImage(null);
-
-    const buildPrompt = () => {
-        const { mode, aspectRatio, prompt, artStyle, modifier, environment, pose, lighting, negativePrompt, scale, enhancementLevel } = settings;
-    
-        const enhancementKeywords: Record<EnhancementLevel, string> = {
-            'Standard': 'clear, good quality',
-            'High': 'high detail, sharp focus, professional photography',
-            'Ultra': 'ultra-detailed masterpiece, 8k resolution, photorealistic, hyperrealistic, intricate details'
-        };
-        const qualityPrompt = enhancementKeywords[enhancementLevel];
-    
-        if (mode === 'boxArt') {
-            const parts = [
-                `Create a dynamic 2D box art illustration for a collectible toy of the subject.`,
-                `The art style is '${artStyle || 'Modern Anime'}'.`,
-            ];
-            if (pose) parts.push(`The subject is in a '${pose}'.`);
-            if (environment) parts.push(`The background is a '${environment}' scene.`);
-            if (lighting) parts.push(`The lighting is '${lighting}'.`);
-            if (prompt) parts.push(prompt);
-    
-            parts.push(`The illustration must be of exceptional quality, incorporating these characteristics: ${qualityPrompt}.`);
-            parts.push(`The final image's aspect ratio must be ${aspectRatio}.`);
-            
-            if (negativePrompt) {
-                parts.push(`Do NOT include the following elements: ${negativePrompt}.`);
-            }
-            
-            return parts.join(' ');
-        }
-        
-        // --- Figurine Mode ---
-        const scaleDescriptions: Record<FigurineScale, string> = {
-            '1/12': 'a small 1/12 scale model',
-            '1/10': 'a 1/10 scale model',
-            '1/8': 'a standard 1/8 scale model',
-            '1/7': 'a standard, high-quality 1/7 scale model',
-            '1/6': 'a large, premium 1/6 scale model',
-            '1/4': 'a large, premium-format 1/4 scale model with intricate textures'
-        };
-        
-        const parts = [
-            `A professional product photograph of a collectible figurine of the subject.`,
-            `The figurine is ${scaleDescriptions[scale]}.`
-        ];
-    
-        if (artStyle) parts.push(`Its art style is '${artStyle}'.`);
-        if (modifier) parts.push(`It has a special '${modifier}'.`);
-        if (pose) parts.push(`The figurine is in a '${pose}'.`);
-        if (environment) parts.push(`The setting is a '${environment}'.`);
-        if (lighting) parts.push(`The scene is lit with '${lighting}'.`);
-        if (prompt) parts.push(prompt);
-    
-        parts.push(`The photograph must be of exceptional quality, featuring ${qualityPrompt}.`);
-        parts.push(`The final image's aspect ratio must be ${aspectRatio}.`);
-    
-        if (negativePrompt) {
-            parts.push(`Avoid the following: ${negativePrompt}.`);
-        }
-    
-        return parts.join(' ');
-    };
-
-    const finalPrompt = buildPrompt();
-
-    try {
-      const resultBase64 = await transformImage(originalImage, finalPrompt);
-      const imageUrl = `data:image/png;base64,${resultBase64}`;
-      setTransformedImage(imageUrl);
-      setHistory(prev => [imageUrl, ...prev].slice(0, 10));
-      handleClearDraft();
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-      setError(errorMessage);
-      console.error(err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [originalImage, settings, handleClearDraft]);
-
-  const handleSave = useCallback(() => {
-    if (!transformedImage) return;
-    const link = document.createElement('a');
-    link.href = transformedImage;
-    link.download = 'nanofig.png';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }, [transformedImage]);
-  
-  const handleShare = useCallback(async () => {
-    if (!transformedImage || !navigator.share) {
-        alert("Web Share API is not available on your browser.");
-        return;
-    }
-    try {
-        const blob = await dataUrlToBlob(transformedImage);
-        const file = new File([blob], 'nanofig.png', { type: 'image/png' });
-        await navigator.share({
-            title: 'My NanoFig Creation',
-            text: 'Check out this cool image I generated with NanoFig!',
-            files: [file],
-        });
-    } catch (error) {
-        console.error('Error sharing:', error);
-        setError('Could not share the image.');
-    }
-  }, [transformedImage]);
-
-  const handleVariation = useCallback(() => {
-    if (!transformedImage) return;
-    setOriginalImage(transformedImage);
-    setTransformedImage(null);
-  }, [transformedImage]);
-
-  const handleSavePreset = useCallback(() => {
-    if (!presetName.trim()) {
-      alert("Please enter a name for the preset.");
-      return;
-    }
-
-    const { mode, prompt, artStyle, environment, pose, lighting, modifier, aspectRatio, scale, enhancementLevel } = settings;
-    const newPreset: Preset = { name: presetName.trim(), mode, prompt, artStyle, environment, pose, lighting, modifier, aspectRatio, scale, enhancementLevel };
-    
-    setPresets(prevPresets => {
-      const existingIndex = prevPresets.findIndex(p => p.name === newPreset.name);
-      if (existingIndex !== -1) {
-        const updatedPresets = [...prevPresets];
-        updatedPresets[existingIndex] = newPreset;
-        return updatedPresets;
-      } else {
-        return [...prevPresets, newPreset];
-      }
-    });
-    
-    setPresetName('');
-  }, [presetName, settings]);
-  
-  const handleLoadPreset = useCallback((preset: Preset) => {
-    setSettings(s => ({
-      ...s,
-      mode: preset.mode,
-      prompt: preset.prompt,
-      artStyle: preset.artStyle,
-      environment: preset.environment,
-      pose: preset.pose,
-      lighting: preset.lighting,
-      modifier: preset.modifier,
-      aspectRatio: preset.aspectRatio,
-      scale: preset.scale,
-      enhancementLevel: preset.enhancementLevel,
-    }));
-  }, [setSettings]);
-
-  const handleDeletePreset = useCallback((name: string) => {
-    if (window.confirm(`Are you sure you want to delete the preset "${name}"?`)) {
-      setPresets(prevPresets => prevPresets.filter(p => p.name !== name));
-    }
-  }, []);
-
-  const handleRandomize = useCallback(() => {
-    const getRandomItem = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
-    const aspectRatios: Array<'1:1' | '4:3' | '16:9'> = ['1:1', '4:3', '16:9'];
-    const currentStyles = settings.mode === 'figurine' ? FIGURINE_STYLES : BOX_ART_STYLES;
-    
-    setSettings(s => ({
-        ...s,
-        artStyle: getRandomItem(currentStyles),
-        environment: getRandomItem(ENVIRONMENTS),
-        pose: getRandomItem(POSES),
-        lighting: getRandomItem(LIGHTING_OPTIONS),
-        aspectRatio: getRandomItem(aspectRatios),
-        scale: s.mode === 'figurine' ? getRandomItem(FIGURINE_SCALES) : s.scale,
-        modifier: s.mode === 'figurine' ? getRandomItem(FIGURINE_MODIFIERS) : '',
-        enhancementLevel: getRandomItem(ENHANCEMENT_LEVELS),
-    }));
-  }, [settings.mode, setSettings]);
-
-  const handleSelectFromHistory = useCallback((imageSrc: string) => {
-    setTransformedImage(imageSrc);
-    setIsHistoryModalOpen(false);
-  }, []);
-
-  const handleUseAsInputFromHistory = useCallback((imageSrc: string) => {
-    setOriginalImage(imageSrc);
-    setTransformedImage(null);
-    setIsHistoryModalOpen(false);
-  }, []);
-
-  const handleDeleteFromHistory = useCallback((imageSrc: string) => {
-    setHistory(prev => prev.filter(img => img !== imageSrc));
-  }, []);
-
-  const handleCropSave = useCallback((croppedDataUrl: string) => {
-    setOriginalImage(croppedDataUrl);
-    setTransformedImage(null);
-    setCropImageSrc(null);
-  }, []);
-
-  const handleCropCancel = useCallback(() => {
-      setCropImageSrc(null);
-  }, []);
-
-  const handleRestoreDraft = useCallback(() => {
+  const handleLoadDraft = useCallback(() => {
     const savedDraft = localStorage.getItem('nanoFigDraft');
     if (savedDraft) {
       try {
-        const draft = JSON.parse(savedDraft);
-        setSettings({
-            mode: draft.mode ?? 'figurine',
-            artStyle: draft.artStyle ?? '',
-            environment: draft.environment ?? '',
-            pose: draft.pose ?? '',
-            lighting: draft.lighting ?? '',
-            modifier: draft.modifier ?? '',
-            aspectRatio: draft.aspectRatio ?? '1:1',
-            prompt: draft.prompt ?? '',
-            negativePrompt: draft.negativePrompt ?? '',
-            scale: draft.scale ?? '1/7',
-            enhancementLevel: draft.enhancementLevel ?? 'Standard',
-        });
-      } catch (e) {
-        console.error("Failed to restore draft:", e);
-        setError("Could not restore draft. It may be corrupted.");
-        localStorage.removeItem('nanoFigDraft');
+        setSettings(JSON.parse(savedDraft));
         setIsDraftAvailable(false);
+      } catch (e) {
+        setError("Could not load the saved draft.");
+        handleClearDraft();
       }
     }
-  }, [setSettings]);
+  }, [setSettings, handleClearDraft]);
+
+  const handleFileSelect = async (file: File) => {
+    setError(null);
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setOriginalImage(dataUrl);
+      setTransformedImage(null);
+    } catch (e) {
+      setError('Could not read the selected file.');
+    }
+  };
   
-  const currentStyles = settings.mode === 'figurine' ? FIGURINE_STYLES : BOX_ART_STYLES;
-  const selectStyles = "w-full bg-gray-900/70 border border-gray-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 transition appearance-none";
+  const handlePlaceholderSelect = async (placeholder: Placeholder) => {
+    setError(null);
+    setIsLoading(true);
+    try {
+      const pngDataUrl = await svgDataUrlToPngDataUrl(placeholder.src);
+      setOriginalImage(pngDataUrl);
+      setTransformedImage(null);
+      if (placeholder.settings) {
+        setSettings(s => ({...initialSettings, ...s, ...placeholder.settings}));
+      }
+    } catch (e) {
+      setError('Could not process the placeholder image.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  const constructPrompt = (): string => {
+    const { mode, prompt, scale, environment, pose, lighting, negativePrompt, artStyle, modifier, enhancementLevel } = settings;
+    let finalPrompt = '';
+    const mainSubject = `"${prompt}"`;
 
-  return (
-    <div className="h-screen min-h-screen bg-gray-900 text-gray-100 flex flex-col md:flex-row font-sans">
-      
-      {isSidebarOpen && (
-        <div 
-            className="fixed inset-0 bg-black/60 z-30 md:hidden" 
-            onClick={() => setIsSidebarOpen(false)}
-            aria-hidden="true"
-        />
-      )}
-      
-      <aside className={`fixed inset-y-0 left-0 z-40 w-[420px] max-w-[90vw] transform transition-transform duration-300 ease-in-out bg-gray-800/80 backdrop-blur-xl border-r border-gray-700/50 flex flex-col md:relative md:translate-x-0 md:w-[420px] md:max-w-none md:flex-shrink-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="p-6 border-b border-gray-700/50 flex justify-between items-center">
-          <Logo className="h-10" />
-          <button 
-            onClick={() => setIsSidebarOpen(false)}
-            className="p-2 rounded-full text-gray-400 hover:bg-gray-700 md:hidden"
-            aria-label="Close settings"
-          >
-            <XMarkIcon className="w-6 h-6" />
-          </button>
+    if (mode === 'figurine') {
+        const qualityMap: Record<EnhancementLevel, string> = {
+            Standard: 'high quality product photography',
+            High: 'ultra high quality, professional product photography, sharp focus',
+            Ultra: 'masterpiece, hyper-realistic, 8k, detailed textures, cinematic product shot',
+        };
+        finalPrompt = `A ${qualityMap[enhancementLevel]} of a ${scale} scale collectible figurine of ${mainSubject}.`;
+        if (artStyle) finalPrompt += ` The figurine is in a ${artStyle} style.`;
+        if (modifier) finalPrompt += ` It has special features like a ${modifier}.`;
+        if (pose) finalPrompt += ` The figurine is posed in a ${pose}.`;
+        if (environment) finalPrompt += ` The background setting is ${environment}.`;
+        if (lighting) finalPrompt += ` The scene uses ${lighting}.`;
+        finalPrompt += ` Focus on making it look like a real, physical object.`;
+    } else { // mode === 'boxArt'
+        const qualityMap: Record<EnhancementLevel, string> = {
+            Standard: 'dynamic illustration',
+            High: 'highly detailed, professional illustration',
+            Ultra: 'masterpiece, 8k, cinematic illustration',
+        };
+        finalPrompt = `A ${qualityMap[enhancementLevel]} of the official box art for a model kit of ${mainSubject}.`;
+        if (artStyle) finalPrompt += ` The art style is ${artStyle}.`;
+        if (pose) finalPrompt += ` The character is shown in a ${pose}.`;
+        if (environment) finalPrompt += ` The background is ${environment}.`;
+        if (lighting) finalPrompt += ` The lighting is ${lighting}.`;
+        finalPrompt += ` The image should look like a 2D illustration, not a photograph of a toy.`;
+    }
+    if (negativePrompt) finalPrompt += ` Avoid the following elements or styles: ${negativePrompt}.`;
+    finalPrompt += ' The final image should be clean, well-composed, and visually appealing.';
+    return finalPrompt;
+  };
+
+  const handleTransform = useCallback(async () => {
+    if (!originalImage) { setError('Please upload an image first.'); return; }
+    if (!settings.prompt.trim()) { setError('Please provide a prompt describing the subject.'); return; }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const prompt = constructPrompt();
+      const base64Data = await transformImage(originalImage, prompt);
+      const newImageSrc = `data:image/png;base64,${base64Data}`;
+      setTransformedImage(newImageSrc);
+      setHistory(prev => [newImageSrc, ...prev.slice(0, 49)]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [originalImage, settings]);
+
+  const handleDownloadImage = () => {
+    if (!transformedImage) return;
+    const link = document.createElement('a');
+    link.href = transformedImage;
+    link.download = `nanofig_${Date.now()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+  
+  const handleShareImage = async () => {
+    if (!transformedImage) return;
+    try {
+      const blob = await dataUrlToBlob(transformedImage);
+      const file = new File([blob], `nanofig_${Date.now()}.png`, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'My NanoFig Creation!', text: 'Check out this figurine I designed with NanoFig!', });
+      } else {
+        alert("Web Share API is not supported in your browser.");
+      }
+    } catch (err) {
+      setError('Could not share the image.');
+    }
+  };
+
+  const handleReset = () => {
+    setOriginalImage(null);
+    setTransformedImage(null);
+    setSettings(initialSettings);
+    setError(null);
+  };
+
+  const handleHistorySelect = (imageSrc: string) => { setTransformedImage(imageSrc); setIsHistoryModalOpen(false); };
+  const handleHistoryUseAsInput = (imageSrc: string) => { setOriginalImage(imageSrc); setTransformedImage(null); setIsHistoryModalOpen(false); };
+  const handleHistoryDelete = (imageSrc: string) => { setHistory(prev => prev.filter(src => src !== imageSrc)); };
+  const handleCropComplete = (croppedDataUrl: string) => { setOriginalImage(croppedDataUrl); setCropImageSrc(null); };
+  const handleEditComplete = (editedDataUrl: string) => { setTransformedImage(editedDataUrl); setEditorImageSrc(null); };
+
+  const handleLoadPreset = (preset: Preset) => {
+    setSettings(s => ({ ...s, ...preset, prompt: s.prompt || preset.prompt, negativePrompt: s.negativePrompt }));
+  };
+  
+  const handleSavePreset = () => {
+    if (!presetName.trim()) { setError("Please enter a name for your preset."); return; }
+    const newPreset: Preset = { name: presetName, ...settings };
+    setPresets(prev => [...prev.filter(p => p.name !== presetName), newPreset].sort((a, b) => a.name.localeCompare(b.name)));
+    setPresetName('');
+
+    setSaveConfirmation(`Preset "${newPreset.name}" saved!`);
+    if (saveConfirmTimeoutRef.current) {
+        clearTimeout(saveConfirmTimeoutRef.current);
+    }
+    saveConfirmTimeoutRef.current = window.setTimeout(() => {
+        setSaveConfirmation(null);
+    }, 3000);
+  };
+  
+  const handleDeletePreset = (name: string) => {
+    if (window.confirm(`Are you sure you want to delete the preset "${name}"? This action cannot be undone.`)) {
+        setPresets(prev => prev.filter(p => p.name !== name));
+    }
+  };
+
+  const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
+    setSettings(s => ({ ...s, [key]: value }));
+  };
+
+  const currentArtStyles = settings.mode === 'figurine' ? FIGURINE_STYLES : BOX_ART_STYLES;
+  const currentPromptExamples = settings.mode === 'figurine' ? figurinePromptExamples : boxArtPromptExamples;
+
+  const renderSidebar = () => (
+    <aside className="w-full md:w-96 bg-gray-800/50 md:bg-gray-800/30 border-r border-gray-700/50 p-6 flex flex-col space-y-6 overflow-y-auto">
+      <div className="flex items-center justify-between">
+        <Logo />
+        <button onClick={() => setIsHelpModalOpen(true)} className="text-gray-400 hover:text-yellow-400 transition">
+            <QuestionMarkCircleIcon className="w-7 h-7" />
+        </button>
+      </div>
+
+      <div className="flex items-center space-x-2">
+        <button onClick={undo} disabled={!canUndo} className="p-2 rounded-md disabled:opacity-50 text-gray-400 hover:bg-gray-700 hover:text-white transition"><UndoIcon className="w-5 h-5" /></button>
+        <button onClick={redo} disabled={!canRedo} className="p-2 rounded-md disabled:opacity-50 text-gray-400 hover:bg-gray-700 hover:text-white transition"><RedoIcon className="w-5 h-5" /></button>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-1">Mode</label>
+        <div className="flex bg-gray-900/50 p-1 rounded-lg border border-gray-700">
+            {['figurine', 'boxArt'].map((mode) => (
+                <button key={mode} onClick={() => updateSetting('mode', mode as Mode)} className={`w-1/2 py-2 text-sm font-semibold rounded-md transition ${settings.mode === mode ? 'bg-yellow-400 text-gray-900' : 'text-gray-300 hover:bg-gray-700/50'}`}>
+                    {mode === 'figurine' ? 'Figurine' : 'Box Art'}
+                </button>
+            ))}
         </div>
-        
-        <div className="flex-grow p-6 w-full flex flex-col gap-6 overflow-y-auto">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">Generation Mode</label>
-              <div className="flex gap-2 rounded-lg bg-gray-900/70 p-1 border border-gray-600">
-                <button onClick={() => setSettings(s => ({ ...s, mode: 'figurine', artStyle: '' }))} className={`w-full py-2 rounded-md transition ${settings.mode === 'figurine' ? 'bg-yellow-400 text-gray-900 font-semibold' : 'hover:bg-gray-700'}`}>Figurine</button>
-                <button onClick={() => setSettings(s => ({ ...s, mode: 'boxArt', artStyle: '' }))} className={`w-full py-2 rounded-md transition ${settings.mode === 'boxArt' ? 'bg-yellow-400 text-gray-900 font-semibold' : 'hover:bg-gray-700'}`}>Box Art</button>
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">Aspect Ratio</label>
-              <div className="flex gap-2 rounded-lg bg-gray-900/70 p-1 border border-gray-600">
-                {(['1:1', '4:3', '16:9'] as const).map(ratio => (
-                    <button key={ratio} onClick={() => setSettings(s => ({...s, aspectRatio: ratio}))} className={`w-full py-2 rounded-md transition ${settings.aspectRatio === ratio ? 'bg-yellow-400 text-gray-900 font-semibold' : 'hover:bg-gray-700'}`}>{ratio}</button>
+      </div>
+      
+      <div className="relative">
+        <label htmlFor="prompt" className="flex items-center justify-between text-sm font-medium text-gray-300 mb-1">
+          <span>Subject Prompt</span>
+          <button onClick={() => setIsPromptHelpVisible(v => !v)} className="text-xs text-yellow-400 hover:underline">Examples</button>
+        </label>
+        <textarea id="prompt" value={settings.prompt} onChange={(e) => updateSetting('prompt', e.target.value)} rows={3} className="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-2 text-white focus:ring-yellow-500 focus:border-yellow-500 transition" placeholder={`e.g., ${currentPromptExamples[0]}`}></textarea>
+        {isPromptHelpVisible && (
+            <div ref={promptHelpRef} className="absolute z-10 w-full bg-gray-700 border border-gray-600 rounded-lg mt-1 p-2 space-y-1 animate-fade-in-scale">
+                {currentPromptExamples.map(ex => (
+                    <button key={ex} onClick={() => { updateSetting('prompt', ex); setIsPromptHelpVisible(false); }} className="w-full text-left text-xs p-2 rounded hover:bg-gray-600 text-gray-300">
+                      {ex}
+                    </button>
                 ))}
-              </div>
             </div>
-          </div>
+        )}
+      </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-2">Enhancement Level</label>
-            <div className="flex gap-2 rounded-lg bg-gray-900/70 p-1 border border-gray-600">
-              {(ENHANCEMENT_LEVELS).map(level => (
-                  <button key={level} onClick={() => setSettings(s => ({...s, enhancementLevel: level}))} className={`w-full py-2 rounded-md transition ${settings.enhancementLevel === level ? 'bg-yellow-400 text-gray-900 font-semibold' : 'hover:bg-gray-700'}`}>{level}</button>
-              ))}
-            </div>
-          </div>
-          
-          {settings.mode === 'figurine' && (
-            <div>
-                <label htmlFor="scale-slider" className="flex justify-between items-center text-sm font-medium text-gray-400 mb-2">
-                    <span>Figurine Scale</span>
-                    <span className="px-2 py-1 text-xs font-semibold text-yellow-300 bg-gray-900/70 border border-gray-600 rounded-md">{settings.scale}</span>
-                </label>
-                <input
-                    id="scale-slider"
-                    type="range"
-                    min="0"
-                    max={FIGURINE_SCALES.length - 1}
-                    step="1"
-                    value={FIGURINE_SCALES.indexOf(settings.scale)}
-                    onChange={(e) => {
-                        const newScale = FIGURINE_SCALES[parseInt(e.target.value, 10)];
-                        setSettings(s => ({ ...s, scale: newScale }));
-                    }}
-                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer range-lg [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:bg-yellow-400 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:transition-all [&::-webkit-slider-thumb]:duration-150 [&::-webkit-slider-thumb]:ease-in-out [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:hover:bg-yellow-300"
-                />
-            </div>
-          )}
+      <div className="grid grid-cols-2 gap-4">
+        <SelectControl label="Art Style" value={settings.artStyle} onChange={v => updateSetting('artStyle', v)} options={currentArtStyles} />
+        <SelectControl label="Pose" value={settings.pose} onChange={v => updateSetting('pose', v)} options={POSES} />
+        <SelectControl label="Environment" value={settings.environment} onChange={v => updateSetting('environment', v)} options={ENVIRONMENTS} />
+        <SelectControl label="Lighting" value={settings.lighting} onChange={v => updateSetting('lighting', v)} options={LIGHTING_OPTIONS} />
+      </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-2">Art Style</label>
-            <div className="flex flex-wrap gap-2">
-              {currentStyles.map(style => (
-                  <button key={style} onClick={() => setSettings(s => ({...s, artStyle: style}))} className={`px-3 py-1 text-sm rounded-full transition border ${settings.artStyle === style ? 'bg-yellow-400 text-gray-900 border-yellow-400 font-semibold' : 'bg-gray-700 border-gray-600 hover:bg-gray-600 hover:border-gray-500'}`}>{style}</button>
-              ))}
-            </div>
-          </div>
-          
-          <div className="flex items-center justify-between gap-4">
-             <div className="flex items-center gap-2">
-                <h3 className="text-lg font-semibold text-gray-300">Settings</h3>
-                <button onClick={() => setIsHelpModalOpen(true)} className="text-gray-400 hover:text-yellow-400 transition" title="Help">
-                    <QuestionMarkCircleIcon className="w-6 h-6" />
-                </button>
-            </div>
-            <div className="flex items-center gap-2">
-                <button onClick={undo} disabled={!canUndo} className="p-2 rounded-lg text-gray-300 bg-gray-900/70 border border-gray-600 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition" title="Undo change (Ctrl+Z)">
-                  <UndoIcon className="w-5 h-5" />
-                </button>
-                <button onClick={redo} disabled={!canRedo} className="p-2 rounded-lg text-gray-300 bg-gray-900/70 border border-gray-600 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition" title="Redo change (Ctrl+Y)">
-                  <RedoIcon className="w-5 h-5" />
-                </button>
-            </div>
-          </div>
+      {settings.mode === 'figurine' && (
+        <div className="grid grid-cols-2 gap-4">
+          <SelectControl label="Modifier" value={settings.modifier} onChange={v => updateSetting('modifier', v)} options={FIGURINE_MODIFIERS} />
+          <SelectControl label="Scale" value={settings.scale} onChange={v => updateSetting('scale', v as FigurineScale)} options={FIGURINE_SCALES} />
+        </div>
+      )}
 
-          <div className="relative" ref={promptHelpRef}>
-            <label htmlFor="prompt" className="flex items-center gap-2 text-sm font-medium text-gray-400 mb-2">
-                <span>Main Prompt / Description</span>
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-1">Enhancement Level</label>
+        <div className="flex bg-gray-900/50 p-1 rounded-lg border border-gray-700">
+            {ENHANCEMENT_LEVELS.map((level) => (
+                <button key={level} onClick={() => updateSetting('enhancementLevel', level)} className={`w-1/3 py-2 text-sm font-semibold rounded-md transition ${settings.enhancementLevel === level ? 'bg-yellow-400 text-gray-900' : 'text-gray-300 hover:bg-gray-700/50'}`}>
+                    {level}
+                </button>
+            ))}
+        </div>
+      </div>
+      
+      <div className="border-t border-gray-700/50 mt-6 pt-6">
+        <h3 className="text-base font-semibold text-gray-200 mb-3">Presets</h3>
+        <div className="space-y-2 mb-4 max-h-48 overflow-y-auto pr-2">
+            {presets.map(preset => (
+            <div key={preset.name} className="flex items-center justify-between bg-gray-900/50 p-2 rounded-lg group transition-colors hover:bg-gray-900">
                 <button
-                    onClick={() => setIsPromptHelpVisible(prev => !prev)}
-                    type="button"
-                    className="text-gray-400 hover:text-yellow-400 transition"
-                    title="Show prompt examples"
+                    onClick={() => handleLoadPreset(preset)}
+                    className="flex-grow text-left text-sm text-gray-300 group-hover:text-yellow-400 transition"
+                    title={`Load "${preset.name}"`}
                 >
-                    <QuestionMarkCircleIcon className="w-5 h-5" />
+                {preset.name}
                 </button>
-            </label>
-            <input id="prompt" type="text" value={settings.prompt} onChange={(e) => setSettings(s => ({...s, prompt: e.target.value}))} className="w-full bg-gray-900/70 border border-gray-600 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 transition" placeholder="e.g., A powerful hero, dark fantasy theme" />
-            {isPromptHelpVisible && (
-                <div className="absolute top-full mt-2 w-full bg-gray-700 border border-gray-600 rounded-lg p-4 z-20 shadow-lg">
-                    <h4 className="font-semibold text-white mb-2">Prompt Examples ({settings.mode === 'figurine' ? 'Figurine' : 'Box Art'})</h4>
-                    <ul className="text-gray-300 text-sm space-y-2">
-                        {(settings.mode === 'figurine' ? figurinePromptExamples : boxArtPromptExamples).map((example, index) => (
-                            <li key={index}>
-                                <button
-                                    onClick={() => {
-                                        setSettings(s => ({ ...s, prompt: example }));
-                                        setIsPromptHelpVisible(false);
-                                    }}
-                                    className="text-left hover:text-yellow-300 transition w-full"
-                                >
-                                    - {example}
-                                </button>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 gap-4">
-            <div>
-              <label htmlFor="environment" className="block text-sm font-medium text-gray-400 mb-1">Environment</label>
-              <select id="environment" value={settings.environment} onChange={(e) => setSettings(s => ({...s, environment: e.target.value}))} className={selectStyles}>
-                <option value="">Select Environment...</option>
-                {ENVIRONMENTS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
+                <button
+                    onClick={() => handleDeletePreset(preset.name)}
+                    className="ml-2 p-1 text-gray-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition"
+                    title={`Delete "${preset.name}"`}
+                    aria-label={`Delete preset ${preset.name}`}
+                >
+                <TrashIcon className="w-4 h-4" />
+                </button>
             </div>
-            <div>
-              <label htmlFor="pose" className="block text-sm font-medium text-gray-400 mb-1">Pose</label>
-              <select id="pose" value={settings.pose} onChange={(e) => setSettings(s => ({...s, pose: e.target.value}))} className={selectStyles}>
-                <option value="">Select Pose...</option>
-                {POSES.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="lighting" className="block text-sm font-medium text-gray-400 mb-1">Lighting</label>
-              <select id="lighting" value={settings.lighting} onChange={(e) => setSettings(s => ({...s, lighting: e.target.value}))} className={selectStyles}>
-                <option value="">Select Lighting...</option>
-                {LIGHTING_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
-            </div>
-            {settings.mode === 'figurine' && (
-              <div>
-                <label htmlFor="modifier" className="block text-sm font-medium text-gray-400 mb-1">Figurine Modifier</label>
-                <select id="modifier" value={settings.modifier} onChange={(e) => setSettings(s => ({...s, modifier: e.target.value}))} className={selectStyles}>
-                  <option value="">Select Modifier...</option>
-                  {FIGURINE_MODIFIERS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                </select>
-              </div>
-            )}
-          </div>
-          <div>
-            <label htmlFor="negative-prompt" className="block text-sm font-medium text-gray-400 mb-2">Negative Prompt (what to avoid)</label>
-            <input id="negative-prompt" type="text" value={settings.negativePrompt} onChange={(e) => setSettings(s => ({...s, negativePrompt: e.target.value}))} className="w-full bg-gray-900/70 border border-gray-600 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 transition" placeholder="e.g., blurry background, text, watermarks" />
-          </div>
-          
-          <div className="pt-6 border-t border-gray-700">
-            <h3 className="text-lg font-semibold text-gray-300 mb-3">Generation Presets</h3>
-            <div className="flex flex-col gap-2 mb-4">
-              <input 
+            ))}
+            {presets.length === 0 && <p className="text-sm text-gray-500 text-center py-2">No custom presets saved.</p>}
+        </div>
+        <div className="space-y-2">
+            <input
                 type="text"
                 value={presetName}
                 onChange={(e) => setPresetName(e.target.value)}
-                className="w-full bg-gray-900/70 border border-gray-600 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 transition"
-                placeholder="Enter preset name..."
-              />
-              <Button onClick={handleSavePreset} variant="secondary" className="w-full">Save Current Settings</Button>
-            </div>
-            {presets.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {presets.map(preset => (
-                  <div key={preset.name} className="flex items-center bg-gray-700 rounded-full">
-                    <button
-                        onClick={() => handleLoadPreset(preset)}
-                        className="px-4 py-1.5 text-sm rounded-l-full bg-gray-700 hover:bg-gray-600 transition"
-                    >
-                        {preset.name}
-                    </button>
-                    <button onClick={() => handleDeletePreset(preset.name)} className="p-2 text-gray-400 hover:text-white hover:bg-red-500/50 rounded-r-full transition" title={`Delete "${preset.name}"`}><TrashIcon className="w-4 h-4" /></button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </aside>
-
-      <main className="flex-1 flex flex-col p-4 md:p-6 lg:p-8 min-h-0">
-        <div className="flex-1 flex flex-col lg:flex-row gap-6 lg:gap-8 items-start">
-          <div className="w-full lg:w-1/2 flex flex-col gap-4">
-            <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-bold text-gray-300">Input Image</h2>
-                <button 
-                  onClick={() => setIsSidebarOpen(true)}
-                  className="p-2 rounded-lg text-gray-300 bg-gray-800 border border-gray-700 hover:bg-gray-700 md:hidden"
-                  aria-label="Open settings"
-                >
-                  <AdjustmentsHorizontalIcon className="w-5 h-5" />
-                </button>
-            </div>
-            <div key={originalImage ? 'image-present' : 'image-absent'} className="animate-fade-in-scale">
-                {originalImage ? (
-                <div className="relative group">
-                    <ImagePreview imageSrc={originalImage} altText="Original image" aspectRatio="1:1" />
-                    <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                        <button onClick={() => setCropImageSrc(originalImage)} className="p-2 rounded-lg text-gray-300 bg-gray-800/60 backdrop-blur-sm border border-gray-700 hover:bg-gray-700" title="Crop image">
-                            <CropIcon className="w-5 h-5" />
-                        </button>
-                        <button onClick={() => { setOriginalImage(null); setTransformedImage(null); }} className="p-2 rounded-lg text-gray-300 bg-red-800/60 backdrop-blur-sm border border-red-700 hover:bg-red-700" title="Remove image">
-                            <TrashIcon className="w-5 h-5" />
-                        </button>
-                    </div>
-                </div>
-                ) : (
-                <div className="flex flex-col gap-6">
-                    <ImageUploader onImageUpload={handleImageUpload} onError={setError} />
-                    <PlaceholderGallery placeholders={placeholders} onSelect={handleSelectPlaceholder} />
-                </div>
-                )}
-            </div>
-          </div>
-
-          <div className="w-full lg:w-1/2 flex flex-col gap-4">
-            <h2 className="text-2xl font-bold text-gray-300">Generated Image</h2>
-            <div className="relative group">
-                <ImagePreview 
-                    imageSrc={transformedImage} 
-                    isLoading={isLoading} 
-                    altText="Transformed image" 
-                    aspectRatio={settings.aspectRatio} 
-                />
-                {transformedImage && !isLoading && (
-                    <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                        <button onClick={() => setEditorImageSrc(transformedImage)} className="p-2 rounded-lg text-gray-300 bg-gray-800/60 backdrop-blur-sm border border-gray-700 hover:bg-gray-700" title="Adjust image">
-                            <AdjustmentsHorizontalIcon className="w-5 h-5" />
-                        </button>
-                    </div>
-                )}
-            </div>
-          </div>
-        </div>
-        
-        {isDraftAvailable && (
-          <div className="mt-4 p-4 bg-gray-800/80 border border-yellow-400/30 rounded-lg flex items-center justify-between gap-4">
-            <p className="text-yellow-200">You have an unsaved draft. Would you like to restore it?</p>
-            <div>
-              <button onClick={handleRestoreDraft} className="font-semibold text-yellow-300 hover:text-yellow-200 mr-4">Restore</button>
-              <button onClick={handleClearDraft} className="font-semibold text-gray-400 hover:text-gray-300">Dismiss</button>
-            </div>
-          </div>
-        )}
-        
-        {error && <p className="mt-4 text-center text-red-400 bg-red-900/50 p-3 rounded-lg">{error}</p>}
-        
-        <div className={`mt-6 flex flex-col sm:flex-row gap-4 justify-center items-center flex-wrap transition-all duration-500 ease-out ${originalImage ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
-          <Button onClick={handleTransform} disabled={!originalImage || isLoading} className="w-full sm:w-auto">
-            {isLoading ? <LoadingSpinnerIcon className="w-6 h-6 mr-3" /> : <SparklesIcon className="w-6 h-6 mr-3" />}
-            {isLoading ? 'Generating...' : 'Generate Image'}
-          </Button>
-          <Button onClick={handleRandomize} variant="secondary" disabled={isLoading} title="Randomize settings">
-            <MagicWandIcon className="w-6 h-6" />
-          </Button>
-          <div className="w-px h-8 bg-gray-700 hidden sm:block"></div>
-          <Button onClick={handleSave} disabled={!transformedImage || isLoading} variant="secondary">
-            <DownloadIcon className="w-6 h-6 mr-3" /> Save
-          </Button>
-          {navigator.share && (
-            <Button onClick={handleShare} disabled={!transformedImage || isLoading} variant="secondary">
-              <ShareIcon className="w-6 h-6 mr-3" /> Share
+                placeholder="New preset name"
+                className="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-2 text-white focus:ring-yellow-500 focus:border-yellow-500 transition text-sm"
+                aria-label="New preset name"
+            />
+            <Button onClick={handleSavePreset} variant="secondary" className="w-full !py-2 !text-sm">
+                Save Current Settings
             </Button>
-          )}
-          <Button onClick={handleVariation} disabled={!transformedImage || isLoading} variant="secondary">
-            <RecycleIcon className="w-6 h-6 mr-3" /> Create Variation
-          </Button>
+            {saveConfirmation && (
+            <p className="text-xs text-green-400 text-center mt-2 animate-fade-in-scale" role="status">
+                {saveConfirmation}
+            </p>
+            )}
         </div>
-        
-        <div className="mt-auto pt-6 flex justify-between items-center text-gray-500">
-          <button onClick={() => setIsHistoryModalOpen(true)} className="hover:text-yellow-400 transition">View History ({history.length})</button>
-          <span>v1.0.0</span>
+      </div>
+
+    </aside>
+  );
+
+  const SelectControl: React.FC<{label: string, value: string, onChange: (v: string) => void, options: readonly string[]}> = ({label, value, onChange, options}) => (
+    <div>
+      <label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>
+      <select value={value} onChange={e => onChange(e.target.value)} className="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-2.5 text-white focus:ring-yellow-500 focus:border-yellow-500 transition text-sm">
+        <option value="">Default</option>
+        {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+      </select>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col md:flex-row min-h-screen font-sans bg-gray-900 text-white">
+        <div className="md:hidden p-4 flex justify-between items-center bg-gray-800 border-b border-gray-700">
+            <Logo className="!text-2xl" />
+            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
+                <AdjustmentsHorizontalIcon className="w-6 h-6" />
+            </button>
         </div>
-      </main>
-      
-      {isHistoryModalOpen && (
-        <HistoryModal 
-          isOpen={isHistoryModalOpen} 
-          onClose={() => setIsHistoryModalOpen(false)}
-          history={history}
-          onSelect={handleSelectFromHistory}
-          onUseAsInput={handleUseAsInputFromHistory}
-          onDelete={handleDeleteFromHistory}
-        />
-      )}
-      {isHelpModalOpen && (
-        <HelpModal 
-          isOpen={isHelpModalOpen} 
-          onClose={() => setIsHelpModalOpen(false)}
-        />
-      )}
-      {cropImageSrc && originalImage && (
-        <ImageCropper
-            imageSrc={cropImageSrc}
-            aspectRatioValue={
-                settings.aspectRatio === '1:1' ? 1 :
-                settings.aspectRatio === '4:3' ? 4/3 : 16/9
-            }
-            onClose={handleCropCancel}
-            onSave={handleCropSave}
-        />
-      )}
-      {editorImageSrc && (
-        <ImageEditorModal
-            imageSrc={editorImageSrc}
-            onClose={() => setEditorImageSrc(null)}
-            onSave={(newImageSrc) => {
-              setTransformedImage(newImageSrc);
-              setHistory(prev => [newImageSrc, ...prev].slice(0, 10));
-              setEditorImageSrc(null);
-            }}
-        />
-      )}
+
+        <div className={`fixed inset-0 z-30 transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:flex`}>
+            {renderSidebar()}
+            {isSidebarOpen && <button onClick={() => setIsSidebarOpen(false)} className="md:hidden absolute top-6 right-4 p-2 bg-gray-800 rounded-full z-40"><XMarkIcon className="w-6 h-6"/></button>}
+        </div>
+
+        <main className="flex-1 flex flex-col p-4 md:p-8 overflow-y-auto">
+            {error && (
+                <div className="bg-red-800/50 border border-red-700 text-red-200 px-4 py-3 rounded-lg relative mb-4" role="alert">
+                    <strong className="font-bold">Error: </strong>
+                    <span className="block sm:inline">{error}</span>
+                    <button onClick={() => setError(null)} className="absolute top-0 bottom-0 right-0 px-4 py-3">
+                        <XMarkIcon className="w-5 h-5" />
+                    </button>
+                </div>
+            )}
+            <div className="flex-grow grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">
+                <div className="w-full max-w-lg mx-auto flex flex-col items-center gap-4">
+                    <h2 className="text-xl font-bold text-center text-gray-400">INPUT</h2>
+                    {originalImage ? (
+                        <div className="w-full relative group">
+                            <ImagePreview imageSrc={originalImage} altText="Original" aspectRatio={settings.aspectRatio} />
+                            <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={() => setCropImageSrc(originalImage)} className="p-2 bg-gray-900/60 backdrop-blur-sm rounded-lg border border-gray-700 hover:bg-gray-700/80 transition" title="Crop Image"><CropIcon className="w-5 h-5" /></button>
+                                <button onClick={() => setOriginalImage(null)} className="p-2 bg-red-800/60 backdrop-blur-sm rounded-lg border border-red-700 hover:bg-red-700/80 transition" title="Remove Image"><TrashIcon className="w-5 h-5" /></button>
+                            </div>
+                        </div>
+                    ) : (
+                        <>
+                            <ImageUploader onImageUpload={handleFileSelect} onError={setError} />
+                            <PlaceholderGallery placeholders={placeholders} onSelect={handlePlaceholderSelect} />
+                        </>
+                    )}
+                </div>
+                <div className="w-full max-w-lg mx-auto flex flex-col items-center gap-4">
+                    <h2 className="text-xl font-bold text-center text-gray-400">OUTPUT</h2>
+                    <ImagePreview imageSrc={transformedImage} altText="Transformed" isLoading={isLoading} aspectRatio={settings.aspectRatio}/>
+                </div>
+            </div>
+            
+            <div className="flex-shrink-0 mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
+                <Button onClick={handleTransform} disabled={isLoading || !originalImage} className="w-full sm:w-auto">
+                    {isLoading ? <LoadingSpinnerIcon className="w-6 h-6 mr-2" /> : <SparklesIcon className="w-6 h-6 mr-2" />}
+                    {isLoading ? 'Generating...' : 'Generate NanoFig'}
+                </Button>
+                <div className="flex items-center gap-2">
+                    <Button onClick={() => setIsHistoryModalOpen(true)} variant="secondary" title="History"><PhotoIcon className="w-6 h-6" /></Button>
+                    <Button onClick={handleDownloadImage} disabled={!transformedImage || isLoading} variant="secondary" title="Download"><DownloadIcon className="w-6 h-6" /></Button>
+                    <Button onClick={handleShareImage} disabled={!transformedImage || isLoading} variant="secondary" title="Share"><ShareIcon className="w-6 h-6" /></Button>
+                    <Button onClick={() => setEditorImageSrc(transformedImage)} disabled={!transformedImage || isLoading} variant="secondary" title="Adjust Image"><MagicWandIcon className="w-6 h-6" /></Button>
+                    <Button onClick={handleReset} variant="secondary" title="Reset All"><RecycleIcon className="w-6 h-6" /></Button>
+                </div>
+            </div>
+        </main>
+
+        <HistoryModal isOpen={isHistoryModalOpen} onClose={() => setIsHistoryModalOpen(false)} history={history} onSelect={handleHistorySelect} onUseAsInput={handleHistoryUseAsInput} onDelete={handleHistoryDelete} />
+        <HelpModal isOpen={isHelpModalOpen} onClose={() => setIsHelpModalOpen(false)} />
+        {cropImageSrc && <ImageCropper imageSrc={cropImageSrc} aspectRatioValue={1} onClose={() => setCropImageSrc(null)} onSave={handleCropComplete} />}
+        {editorImageSrc && <ImageEditorModal imageSrc={editorImageSrc} onClose={() => setEditorImageSrc(null)} onSave={handleEditComplete} />}
     </div>
   );
 };
