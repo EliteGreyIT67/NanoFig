@@ -27,27 +27,38 @@ const safetySettings = [
     },
 ];
 
-export const transformImage = async (dataUrl: string, prompt: string): Promise<string> => {
+/**
+ * Transforms an image using the Gemini API based on a provided prompt.
+ * @param base64ImageData The base64 encoded image data URL.
+ * @param prompt The text prompt to guide the image transformation.
+ * @param enhancementLevel A string representing the desired enhancement level.
+ * @param aspectRatio The desired aspect ratio.
+ * @returns A promise that resolves to an object containing the generated text and image data URL.
+ */
+export const transformImage = async (
+    base64ImageData: string,
+    prompt: string,
+    enhancementLevel: string,
+    aspectRatio: string,
+): Promise<{ text: string, image: string }> => {
     try {
-        const [header, data] = dataUrl.split(',');
-        if (!header || !data) {
-            throw new Error("Invalid image data URL format.");
-        }
-        
-        const mimeTypeMatch = header.match(/:(.*?);/);
-        if (!mimeTypeMatch || !mimeTypeMatch[1]) {
-            throw new Error("Could not determine MIME type from data URL.");
+        const mimeTypeMatch = base64ImageData.match(/^data:(image\/[a-zA-Z]+);base64,/);
+        if (!mimeTypeMatch) {
+            throw new Error('Invalid image data URL format.');
         }
         const mimeType = mimeTypeMatch[1];
-        
+        const data = base64ImageData.substring(mimeTypeMatch[0].length);
+
+        const model = 'gemini-2.5-flash-image';
+
         const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
+            model,
             contents: {
                 parts: [
                     {
                         inlineData: {
-                            data: data,
-                            mimeType: mimeType,
+                            data,
+                            mimeType,
                         },
                     },
                     {
@@ -55,83 +66,71 @@ export const transformImage = async (dataUrl: string, prompt: string): Promise<s
                     },
                 ],
             },
-            // FIX: Moved `safetySettings` inside the `config` object as it is a configuration parameter.
             config: {
                 responseModalities: [Modality.IMAGE, Modality.TEXT],
-                safetySettings: safetySettings,
+                safetySettings,
             },
         });
 
-        // First, check for a valid generated image.
-        const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData?.data);
+        let generatedText = '';
+        let generatedImage = '';
 
-        if (imagePart && imagePart.inlineData?.data) {
-            return imagePart.inlineData.data;
-        }
-
-        // If no image is found, analyze the response to provide a clear error.
-        
-        // Check if the prompt was blocked.
-        const blockReason = response.promptFeedback?.blockReason;
-        if (blockReason) {
-            const blockReasonMessage = response.promptFeedback?.blockReasonMessage;
-            const fullReason = blockReasonMessage ? `${blockReason}: ${blockReasonMessage}` : blockReason;
-            throw new Error(`Request was blocked. Reason: ${fullReason}`);
-        }
-
-        // Check the candidate's finish reason for a more specific error.
-        const finishReason = response.candidates?.[0]?.finishReason;
-        if (finishReason && finishReason !== 'STOP') {
-            let errorMessage = `Image generation failed. Reason: ${finishReason}.`;
-            switch (finishReason) {
-                case 'SAFETY':
-                case 'IMAGE_SAFETY':
-                    errorMessage = 'Image generation was blocked due to safety policies. Please modify your prompt or image and try again.';
-                    break;
-                // FIX: Removed 'IMAGE_OTHER' as it is not a valid FinishReason type.
-                case 'OTHER':
-                    errorMessage = 'The model could not generate an image for this request. This can happen with unusual prompts or images. Please try modifying your settings or using a different photo.';
-                    break;
-                case 'MAX_TOKENS':
-                    errorMessage = 'The request was too long and exceeded the maximum token limit.';
-                    break;
-                case 'RECITATION':
-                    errorMessage = 'The response was blocked due to potential recitation of copyrighted material.';
-                    break;
+        if (response.candidates && response.candidates.length > 0 && response.candidates[0].content && response.candidates[0].content.parts) {
+             for (const part of response.candidates[0].content.parts) {
+                if (part.text) {
+                    generatedText = part.text;
+                } else if (part.inlineData) {
+                    generatedImage = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                }
             }
-            console.error("Image Generation Failed with finishReason:", JSON.stringify(response, null, 2));
-            throw new Error(errorMessage);
+        }
+       
+        if (!generatedImage) {
+             const rejectionReason = response.candidates?.[0]?.finishReason;
+             const safetyRatings = response.candidates?.[0]?.safetyRatings;
+             console.error('Image generation failed.', { rejectionReason, safetyRatings });
+             let message = 'The AI model did not return an image.';
+             if (rejectionReason === 'SAFETY') {
+                 message = 'The request was blocked due to safety settings. Please modify your prompt or image and try again.';
+             } else if (rejectionReason) {
+                 message = `Image generation failed. Reason: ${rejectionReason}`;
+             }
+             throw new Error(message);
         }
 
-        // If not blocked, check if the model provided a text explanation for the failure.
-        const textPart = response.candidates?.[0]?.content?.parts?.find(part => part.text);
-        if (textPart && textPart.text) {
-            throw new Error(`Image generation failed: ${textPart.text.trim()}`);
+        return { text: generatedText, image: generatedImage };
+
+    } catch (error: any) {
+        console.error("Gemini API call failed:", error);
+
+        // Default error message
+        let userFriendlyMessage = "An unexpected error occurred while communicating with the AI model.";
+
+        if (error && typeof error.message === 'string') {
+            // Check for quota error keywords first, as it's the most common user-facing issue
+            if (error.message.includes('429') || /quota|RESOURCE_EXHAUSTED/i.test(error.message)) {
+                userFriendlyMessage = "The service is currently busy due to high demand. Please wait a moment and try again.";
+            } else {
+                 // Try to parse for a more specific API error message
+                try {
+                    const jsonMatch = error.message.match(/{.*}/s);
+                    if (jsonMatch) {
+                        const apiError = JSON.parse(jsonMatch[0]);
+                        if (apiError.error && apiError.error.message) {
+                            userFriendlyMessage = apiError.error.message;
+                        } else {
+                             userFriendlyMessage = error.message; // Fallback to raw message if parsing works but format is unexpected
+                        }
+                    } else {
+                        userFriendlyMessage = error.message; // No JSON found, use raw message
+                    }
+                } catch (e) {
+                    // Parsing failed, the message is not JSON or contains broken JSON. Use the raw string.
+                    userFriendlyMessage = error.message;
+                }
+            }
         }
         
-        // If no image, block reason, or text explanation is found, throw a generic error.
-        console.error("Unhandled Gemini Response:", JSON.stringify(response, null, 2));
-        throw new Error("No image was generated. The model may have refused the request due to content policies or an internal error.");
-
-    } catch (error) {
-        console.error("Error transforming image:", error);
-        if (error instanceof Error) {
-            // Pass our specific, user-facing errors through.
-            const knownErrors = [
-                'Image generation failed:',
-                'Request was blocked.',
-                'The model could not generate',
-                'Image generation was blocked',
-                'The request was too long',
-                'The response was blocked'
-            ];
-            if (knownErrors.some(e => error.message.startsWith(e))) {
-                throw error;
-            }
-            
-            // Wrap other errors (e.g., network issues) in a consistent message.
-            throw new Error(`Failed to communicate with the AI model: ${error.message}`);
-        }
-        throw new Error("An unknown error occurred during image transformation.");
+        throw new Error(userFriendlyMessage);
     }
 };
