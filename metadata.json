@@ -1,0 +1,5 @@
+{
+  "name": "NanoFig",
+  "description": "An AI image transformation app to instantly convert uploaded photos into professional-quality Nano Banana Figures. Key features include uploading photos, applying the 'Nano Banana' AI transformation, previewing the result, and saving or sharing the generated figure.",
+  "requestFramePermissions": []
+}
