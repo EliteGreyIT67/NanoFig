@@ -120,6 +120,46 @@ Once the server is running, open your browser and navigate to the local address 
 5.  **Response Handling:** The service awaits the response, parses the `parts` to separate the generated text and image data, and performs robust error handling.
 6.  **Display:** The returned image is displayed in the `ImagePreview` component, and the image data is added to the generation history.
 
+## 🌍 Deploying to GitHub Pages
+
+You can easily deploy NanoFig as a live website using GitHub Pages.
+
+### 1. Configure your API Key for Deployment
+
+Before deploying, you need to provide your Gemini API key. Following the same method as the local setup, you will create an `env.js` file in the root of your project.
+
+- Create a new file named `env.js`.
+- Add the following code, replacing `YOUR_GEMINI_API_KEY` with your actual key:
+
+  ```javascript
+  // env.js
+  window.process = {
+    env: {
+      API_KEY: 'YOUR_GEMINI_API_KEY'
+    }
+  };
+  ```
+
+- **Commit this file to your repository.**
+
+> **⚠️ Security Warning:** Committing your `env.js` file will make your API key publicly visible if your repository is public. This is **not recommended** for production applications. For a personal project or demo, this is the simplest method. For a more secure approach, consider using a private repository or implementing a backend proxy to protect your key.
+
+### 2. Enable GitHub Pages
+
+1.  Navigate to your repository on GitHub.
+2.  Click on the **Settings** tab.
+3.  In the left sidebar, click on **Pages**.
+4.  Under "Build and deployment," for the "Source," select **Deploy from a branch**.
+5.  Choose the branch you want to deploy from (e.g., `main`).
+6.  For the folder, select `/ (root)`.
+7.  Click **Save**.
+
+### 3. Access Your Live Site
+
+GitHub will start the deployment process. It may take a few minutes. Once it's complete, the URL for your live site will be displayed at the top of the GitHub Pages settings page (e.g., `https://your-username.github.io/nanofig/`).
+
+Your NanoFig application is now live!
+
 ## 🤝 Contributing
 
 Contributions are welcome! If you have suggestions for improvements or find any issues, please feel free to open an issue or submit a pull request.
