@@ -1,11 +1,10 @@
-
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { transformImage } from './services/geminiService';
 import { fileToDataUrl, dataUrlToBlob, svgDataUrlToPngDataUrl } from './utils/fileUtils';
 import ImageUploader from './components/ImageUploader';
 import ImagePreview from './components/ImagePreview';
 import Button from './components/Button';
-import { DownloadIcon, ShareIcon, SparklesIcon, RecycleIcon, TrashIcon, MagicWandIcon, CropIcon, XMarkIcon, UndoIcon, RedoIcon, AdjustmentsHorizontalIcon, LoadingSpinnerIcon, QuestionMarkCircleIcon, PhotoIcon } from './components/Icons';
+import { DownloadIcon, SparklesIcon, RecycleIcon, TrashIcon, CropIcon, XMarkIcon, UndoIcon, RedoIcon, AdjustmentsHorizontalIcon, LoadingSpinnerIcon, QuestionMarkCircleIcon, PhotoIcon } from './components/Icons';
 import HistoryModal from './components/HistoryModal';
 import Logo from './components/Logo';
 import ImageCropper from './components/ImageCropper';
@@ -30,6 +29,7 @@ type Preset = {
   aspectRatio: '1:1' | '4:3' | '16:9';
   scale: FigurineScale;
   enhancementLevel: EnhancementLevel;
+  highFaceFidelity?: boolean;
 };
 
 type Settings = {
@@ -44,6 +44,7 @@ type Settings = {
   aspectRatio: '1:1' | '4:3' | '16:9';
   scale: FigurineScale;
   enhancementLevel: EnhancementLevel;
+  highFaceFidelity: boolean;
 };
 
 export type Placeholder = {
@@ -68,6 +69,7 @@ const initialSettings: Settings = {
   modifier: '',
   aspectRatio: '1:1',
   enhancementLevel: 'Standard',
+  highFaceFidelity: false,
 };
 
 const defaultPresets: Preset[] = [
@@ -83,6 +85,7 @@ const defaultPresets: Preset[] = [
       aspectRatio: '4:3',
       scale: '1/7',
       enhancementLevel: 'High',
+      highFaceFidelity: true,
     },
     {
       name: "90s Retro Box",
@@ -216,7 +219,21 @@ const placeholders: Placeholder[] = [
     },
 ];
 
-// FIX: Corrected the component definition to return JSX and added a default export.
+const Tooltip: React.FC<{ text: string; children: React.ReactNode; widthClass?: string; }> = ({ text, children, widthClass = 'w-64' }) => {
+  return (
+    <span className="group relative flex items-center cursor-help">
+      {children}
+      <QuestionMarkCircleIcon className="w-4 h-4 ml-1.5 text-gray-400 shrink-0" />
+      <span
+        role="tooltip"
+        className={`absolute left-0 bottom-full mb-2 p-3 bg-gray-900 text-gray-200 text-xs rounded-lg border border-gray-600 shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none z-10 ${widthClass}`}
+      >
+        {text}
+      </span>
+    </span>
+  );
+};
+
 const App: React.FC = () => {
   const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [transformedImage, setTransformedImage] = useState<string | null>(null);
@@ -274,8 +291,11 @@ const App: React.FC = () => {
   };
   
   const buildPrompt = useCallback((): string => {
-    const { mode, prompt, scale, environment, pose, lighting, artStyle, modifier } = settings;
-    let finalPrompt = `A high-quality, detailed image of ${prompt}.`;
+    const { mode, prompt, scale, environment, pose, lighting, artStyle, modifier, highFaceFidelity } = settings;
+    
+    const fidelityPrefix = highFaceFidelity ? "Ultra high-fidelity, strongly preserve the exact facial likeness of the person in the image. " : "";
+
+    let finalPrompt = `${fidelityPrefix}A high-quality, detailed image of ${prompt}.`;
 
     if (mode === 'figurine') {
       finalPrompt += ` As a ${artStyle} style, ${scale} scale collectible figurine.`;
@@ -455,84 +475,185 @@ const App: React.FC = () => {
           </div>
 
           <div className="lg:col-span-2 bg-gray-800/70 p-6 rounded-2xl shadow-lg border border-gray-700 self-start">
-             <h2 className="text-xl font-bold mb-4 flex items-center gap-3"><span className="bg-yellow-400 text-gray-900 rounded-full w-8 h-8 flex items-center justify-center font-bold text-lg">2</span> Customize</h2>
-            <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-2">
-                    <Button onClick={() => handleSettingChange('mode', 'figurine')} variant={settings.mode === 'figurine' ? 'primary' : 'secondary'}>Figurine</Button>
-                    <Button onClick={() => handleSettingChange('mode', 'boxArt')} variant={settings.mode === 'boxArt' ? 'primary' : 'secondary'}>Box Art</Button>
-                </div>
-                <div>
-                  <label htmlFor="prompt" className="block text-sm font-medium text-gray-300">Subject / Prompt</label>
-                  <textarea id="prompt" value={settings.prompt} onChange={e => handleSettingChange('prompt', e.target.value)} rows={3} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500" placeholder={settings.mode === 'figurine' ? figurinePromptExamples[0] : boxArtPromptExamples[0]} />
-                </div>
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-3"><span className="bg-yellow-400 text-gray-900 rounded-full w-8 h-8 flex items-center justify-center font-bold text-lg">2</span> Customize</h2>
+            <div className="space-y-6">
                 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="artStyle" className="block text-sm font-medium text-gray-300">Art Style</label>
-                    <select id="artStyle" value={settings.artStyle} onChange={e => handleSettingChange('artStyle', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
-                      <option value="">Default</option>
-                      {currentArtStyles.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  {settings.mode === 'figurine' && <div>
-                    <label htmlFor="scale" className="block text-sm font-medium text-gray-300">Scale</label>
-                    <select id="scale" value={settings.scale} onChange={e => handleSettingChange('scale', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
-                      {FIGURINE_SCALES.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>}
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="environment" className="block text-sm font-medium text-gray-300">Environment</label>
-                    <select id="environment" value={settings.environment} onChange={e => handleSettingChange('environment', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
-                      <option value="">None</option>
-                      {ENVIRONMENTS.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="pose" className="block text-sm font-medium text-gray-300">Pose</label>
-                    <select id="pose" value={settings.pose} onChange={e => handleSettingChange('pose', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
-                      <option value="">Default</option>
-                      {POSES.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Core Concept</h3>
+                <div className="space-y-4">
                     <div>
-                        <label htmlFor="lighting" className="block text-sm font-medium text-gray-300">Lighting</label>
-                        <select id="lighting" value={settings.lighting} onChange={e => handleSettingChange('lighting', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
+                      <label className="block text-sm font-medium text-gray-300">
+                        <Tooltip text="Choose the fundamental type of image: a 3D 'Figurine' for a product shot look, or a 2D 'Box Art' for a dynamic illustration.">
+                          Mode
+                        </Tooltip>
+                      </label>
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                          <Button onClick={() => handleSettingChange('mode', 'figurine')} variant={settings.mode === 'figurine' ? 'primary' : 'secondary'}>Figurine</Button>
+                          <Button onClick={() => handleSettingChange('mode', 'boxArt')} variant={settings.mode === 'boxArt' ? 'primary' : 'secondary'}>Box Art</Button>
+                      </div>
+                    </div>
+                    <div>
+                      <label htmlFor="prompt" className="block text-sm font-medium text-gray-300">
+                        <Tooltip text="Describe the main character or object. Be specific about appearance, clothing, and key features.">
+                          Subject / Prompt
+                        </Tooltip>
+                      </label>
+                      <textarea id="prompt" value={settings.prompt} onChange={e => handleSettingChange('prompt', e.target.value)} rows={3} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500" placeholder={settings.mode === 'figurine' ? figurinePromptExamples[0] : boxArtPromptExamples[0]} />
+                    </div>
+                </div>
+              </div>
+
+              <hr className="border-gray-700" />
+              
+              <div>
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Visual Style</h3>
+                <div className="space-y-4">
+                    <div>
+                      <label htmlFor="artStyle" className="block text-sm font-medium text-gray-300">
+                        <Tooltip text="Defines the overall visual aesthetic. 'Realistic' aims for photorealism, while 'Anime' creates a stylized look.">
+                          Art Style
+                        </Tooltip>
+                      </label>
+                      <select id="artStyle" value={settings.artStyle} onChange={e => handleSettingChange('artStyle', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
                         <option value="">Default</option>
-                        {LIGHTING_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        {currentArtStyles.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                        <label htmlFor="lighting" className="block text-sm font-medium text-gray-300">
+                          <Tooltip text="Controls the mood and shadows of the scene. 'Studio' is clean and bright, while 'Cinematic' is dramatic.">
+                            Lighting
+                          </Tooltip>
+                        </label>
+                        <select id="lighting" value={settings.lighting} onChange={e => handleSettingChange('lighting', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
+                          <option value="">Default</option>
+                          {LIGHTING_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                     </div>
-                    {settings.mode === 'figurine' && <div>
-                        <label htmlFor="modifier" className="block text-sm font-medium text-gray-300">Modifier</label>
-                        <select id="modifier" value={settings.modifier} onChange={e => handleSettingChange('modifier', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
-                            <option value="">None</option>
-                            {FIGURINE_MODIFIERS.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                    </div>}
+                    {settings.mode === 'figurine' && (
+                      <div>
+                          <label htmlFor="modifier" className="block text-sm font-medium text-gray-300">
+                            <Tooltip text="Adds specific material properties to the figurine, like a 'Glossy' shine or 'Weathered' battle damage.">
+                              Modifier
+                            </Tooltip>
+                          </label>
+                          <select id="modifier" value={settings.modifier} onChange={e => handleSettingChange('modifier', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
+                              <option value="">None</option>
+                              {FIGURINE_MODIFIERS.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                      </div>
+                    )}
                 </div>
-                
-                <div className="flex gap-2 items-center justify-center pt-4">
+              </div>
+
+              <hr className="border-gray-700" />
+
+              <div>
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Composition</h3>
+                <div className="space-y-4">
+                    <div>
+                      <label htmlFor="environment" className="block text-sm font-medium text-gray-300">
+                        <Tooltip text="Sets the background and location for your subject, adding context and atmosphere.">
+                          Environment
+                        </Tooltip>
+                      </label>
+                      <select id="environment" value={settings.environment} onChange={e => handleSettingChange('environment', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
+                        <option value="">None</option>
+                        {ENVIRONMENTS.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="pose" className="block text-sm font-medium text-gray-300">
+                        <Tooltip text="Determines the character's posture and action, conveying personality and movement.">
+                          Pose
+                        </Tooltip>
+                      </label>
+                      <select id="pose" value={settings.pose} onChange={e => handleSettingChange('pose', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
+                        <option value="">Default</option>
+                        {POSES.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300">
+                        <Tooltip text="Sets the shape of the final image. 1:1 is square, 4:3 is standard, and 16:9 is wide.">
+                          Aspect Ratio
+                        </Tooltip>
+                      </label>
+                      <div className="grid grid-cols-3 gap-2 mt-2">
+                        <Button onClick={() => handleSettingChange('aspectRatio', '1:1')} variant={settings.aspectRatio === '1:1' ? 'primary' : 'secondary'} className="!py-2">1:1</Button>
+                        <Button onClick={() => handleSettingChange('aspectRatio', '4:3')} variant={settings.aspectRatio === '4:3' ? 'primary' : 'secondary'} className="!py-2">4:3</Button>
+                        <Button onClick={() => handleSettingChange('aspectRatio', '16:9')} variant={settings.aspectRatio === '16:9' ? 'primary' : 'secondary'} className="!py-2">16:9</Button>
+                      </div>
+                    </div>
+                </div>
+              </div>
+
+              <hr className="border-gray-700" />
+
+              <div>
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Details & Quality</h3>
+                <div className="space-y-4">
+                  {settings.mode === 'figurine' && (
+                    <div>
+                      <label htmlFor="scale" className="block text-sm font-medium text-gray-300">
+                        <Tooltip text="Simulates the level of detail for different figurine sizes. Larger scales produce more intricate details.">
+                          Scale
+                        </Tooltip>
+                      </label>
+                      <select id="scale" value={settings.scale} onChange={e => handleSettingChange('scale', e.target.value)} className="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 focus:ring-yellow-500 focus:border-yellow-500">
+                        {FIGURINE_SCALES.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300">
+                      <Tooltip text="Adjusts the AI's post-processing. 'High' and 'Ultra' can improve detail and clarity but may take longer.">
+                        Enhancement Level
+                      </Tooltip>
+                    </label>
+                    <div className="grid grid-cols-3 gap-2 mt-2">
+                      {ENHANCEMENT_LEVELS.map(level => (
+                        <Button key={level} onClick={() => handleSettingChange('enhancementLevel', level)} variant={settings.enhancementLevel === level ? 'primary' : 'secondary'} className="!py-2 !text-sm">{level}</Button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between bg-gray-700/50 p-3 rounded-lg">
+                      <label htmlFor="faceFidelity" className="text-sm font-medium text-gray-200 cursor-pointer">
+                        <Tooltip text="Strongly preserves the character's exact facial likeness. Best for realistic portraits.">
+                          High Face Fidelity
+                        </Tooltip>
+                      </label>
+                      <div className="relative inline-flex items-center cursor-pointer">
+                          <input
+                              id="faceFidelity"
+                              type="checkbox"
+                              checked={settings.highFaceFidelity}
+                              onChange={e => handleSettingChange('highFaceFidelity', e.target.checked)}
+                              className="sr-only peer"
+                          />
+                          <div className="w-11 h-6 bg-gray-600 rounded-full peer peer-focus:ring-2 peer-focus:ring-yellow-500/50 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-500"></div>
+                      </div>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="pt-4 space-y-4">
+                <div className="flex gap-2 items-center justify-center">
                     <Button onClick={undo} disabled={!canUndo} variant="secondary" className="!p-3" title="Undo"><UndoIcon className="w-5 h-5"/></Button>
                     <Button onClick={redo} disabled={!canRedo} variant="secondary" className="!p-3" title="Redo"><RedoIcon className="w-5 h-5"/></Button>
                 </div>
-
-                <div className="pt-4">
+                <div>
                   <Button onClick={handleGenerateClick} disabled={!originalImage || isLoading} className="w-full">
                     <SparklesIcon className="w-6 h-6 mr-2"/>
                     {isLoading ? 'Generating...' : 'Generate Image'}
                   </Button>
                 </div>
-
-                <div className="pt-2 text-center">
+                <div className="text-center">
                     <button onClick={handleClearAll} className="text-sm text-gray-500 hover:text-yellow-400 transition">
                         Reset All Settings & Images
                     </button>
                 </div>
+              </div>
             </div>
           </div>
         </main>

@@ -1,10 +1,4 @@
-
 import { GoogleGenAI, Modality, GenerateContentResponse, HarmCategory, HarmBlockThreshold } from "@google/genai";
-
-// Ensure the API key is available. In a real app, you might want to handle this more gracefully.
-if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable is not set.");
-}
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -86,51 +80,51 @@ export const transformImage = async (
         }
        
         if (!generatedImage) {
-             const rejectionReason = response.candidates?.[0]?.finishReason;
-             const safetyRatings = response.candidates?.[0]?.safetyRatings;
-             console.error('Image generation failed.', { rejectionReason, safetyRatings });
-             let message = 'The AI model did not return an image.';
-             if (rejectionReason === 'SAFETY') {
-                 message = 'The request was blocked due to safety settings. Please modify your prompt or image and try again.';
-             } else if (rejectionReason) {
-                 message = `Image generation failed. Reason: ${rejectionReason}`;
-             }
-             throw new Error(message);
-        }
+            const rejectionReason = response.candidates?.[0]?.finishReason;
+            const safetyRatings = response.candidates?.[0]?.safetyRatings;
+            console.error('Image generation failed.', { rejectionReason, safetyRatings });
+            let message = 'The AI model did not return an image.';
+
+            if (rejectionReason && String(rejectionReason).toUpperCase().includes('SAFETY')) {
+                message = 'The request was blocked for safety reasons. Please adjust your prompt or image and try again.';
+            } else if (typeof rejectionReason === 'string' && rejectionReason) {
+                message = `Image generation failed. Reason: ${rejectionReason}`;
+            } else if (rejectionReason) {
+               message = `Image generation failed for an unknown reason. Check the console for details.`;
+            }
+            throw new Error(message);
+       }
 
         return { text: generatedText, image: generatedImage };
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Gemini API call failed:", error);
+        
+        let errorMessage = "An unexpected error occurred.";
 
-        // Default error message
-        let userFriendlyMessage = "An unexpected error occurred while communicating with the AI model.";
-
-        if (error && typeof error.message === 'string') {
-            // Check for quota error keywords first, as it's the most common user-facing issue
-            if (error.message.includes('429') || /quota|RESOURCE_EXHAUSTED/i.test(error.message)) {
-                userFriendlyMessage = "The service is currently busy due to high demand. Please wait a moment and try again.";
+        if (error instanceof Error) {
+            errorMessage = error.message;
+        } else if (typeof error === 'string') {
+            errorMessage = error;
+        } else if (error && typeof error === 'object' && error !== null) {
+            if ('message' in error && typeof (error as any).message === 'string' && (error as any).message) {
+                errorMessage = (error as any).message;
             } else {
-                 // Try to parse for a more specific API error message
-                try {
-                    const jsonMatch = error.message.match(/{.*}/s);
-                    if (jsonMatch) {
-                        const apiError = JSON.parse(jsonMatch[0]);
-                        if (apiError.error && apiError.error.message) {
-                            userFriendlyMessage = apiError.error.message;
-                        } else {
-                             userFriendlyMessage = error.message; // Fallback to raw message if parsing works but format is unexpected
-                        }
-                    } else {
-                        userFriendlyMessage = error.message; // No JSON found, use raw message
-                    }
-                } catch (e) {
-                    // Parsing failed, the message is not JSON or contains broken JSON. Use the raw string.
-                    userFriendlyMessage = error.message;
+                const errorStr = error.toString();
+                if (errorStr && errorStr !== '[object Object]') {
+                    errorMessage = errorStr;
+                } else {
+                    errorMessage = 'An unknown error occurred. Check the console for details.';
                 }
             }
         }
+
+        // Standardize common API errors into user-friendly messages
+        if (errorMessage.includes('429') || /quota|RESOURCE_EXHAUSTED/i.test(errorMessage)) {
+            throw new Error("The service is currently busy due to high demand. Please wait a moment and try again.");
+        }
         
-        throw new Error(userFriendlyMessage);
+        // Re-throw a clean error for the UI to display
+        throw new Error(errorMessage);
     }
 };
