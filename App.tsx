@@ -1,10 +1,12 @@
+
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { generate3dModel, ModelDetailLevel } from './services/geminiService';
 import { transformImage } from './services/geminiService';
 import { fileToDataUrl, dataUrlToBlob, svgDataUrlToPngDataUrl } from './utils/fileUtils';
 import ImageUploader from './components/ImageUploader';
 import ImagePreview from './components/ImagePreview';
 import Button from './components/Button';
-import { DownloadIcon, SparklesIcon, RecycleIcon, TrashIcon, CropIcon, XMarkIcon, UndoIcon, RedoIcon, AdjustmentsHorizontalIcon, LoadingSpinnerIcon, QuestionMarkCircleIcon, PhotoIcon } from './components/Icons';
+import { DownloadIcon, SparklesIcon, RecycleIcon, TrashIcon, CropIcon, XMarkIcon, UndoIcon, RedoIcon, AdjustmentsHorizontalIcon, LoadingSpinnerIcon, QuestionMarkCircleIcon, PhotoIcon, CubeIcon } from './components/Icons';
 import HistoryModal from './components/HistoryModal';
 import Logo from './components/Logo';
 import ImageCropper from './components/ImageCropper';
@@ -56,6 +58,7 @@ export type Placeholder = {
 
 const FIGURINE_SCALES: FigurineScale[] = ['1/12', '1/10', '1/8', '1/7', '1/6', '1/4'];
 const ENHANCEMENT_LEVELS: EnhancementLevel[] = ['Standard', 'High', 'Ultra'];
+const MODEL_DETAIL_LEVELS: ModelDetailLevel[] = ['Low', 'Medium', 'High'];
 
 const initialSettings: Settings = {
   mode: 'figurine',
@@ -239,6 +242,10 @@ const App: React.FC = () => {
   const [transformedImage, setTransformedImage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [isGenerating3dModel, setIsGenerating3dModel] = useState<boolean>(false);
+  const [modelData, setModelData] = useState<string | null>(null);
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [modelDetailLevel, setModelDetailLevel] = useState<ModelDetailLevel>('Medium');
   
   const { 
     state: settings, 
@@ -321,6 +328,8 @@ const App: React.FC = () => {
 
     setIsLoading(true);
     setError(null);
+    setModelData(null);
+    setModelError(null);
     
     try {
       const fullPrompt = buildPrompt();
@@ -373,6 +382,8 @@ const App: React.FC = () => {
     if (!transformedImage) return;
     setOriginalImage(transformedImage);
     setTransformedImage(null);
+    setModelData(null);
+    setModelError(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   
@@ -381,6 +392,8 @@ const App: React.FC = () => {
     setTransformedImage(null);
     setSettings(initialSettings);
     setError(null);
+    setModelData(null);
+    setModelError(null);
   };
 
   const onCropSave = (dataUrl: string) => {
@@ -407,6 +420,36 @@ const App: React.FC = () => {
 
   const handleDeleteFromHistory = (image: string) => {
     setHistory(prev => prev.filter(item => item !== image));
+  };
+  
+  const handleGenerate3dModelClick = useCallback(async () => {
+    setIsGenerating3dModel(true);
+    setModelData(null);
+    setModelError(null);
+    
+    try {
+      const basePrompt = buildPrompt();
+      const objData = await generate3dModel(basePrompt, modelDetailLevel);
+      setModelData(objData);
+    } catch (e: any) {
+      setModelError(e.message || 'An unknown error occurred during 3D model generation.');
+      console.error(e);
+    } finally {
+      setIsGenerating3dModel(false);
+    }
+  }, [buildPrompt, modelDetailLevel]);
+
+  const handleDownloadModel = () => {
+    if (!modelData) return;
+    const blob = new Blob([modelData], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `nanofig_model_${new Date().getTime()}.obj`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
   
   const currentArtStyles = settings.mode === 'figurine' ? FIGURINE_STYLES : BOX_ART_STYLES;
@@ -437,43 +480,104 @@ const App: React.FC = () => {
         )}
 
         <main className="grid grid-cols-1 lg:grid-cols-5 gap-8">
-          <div className="lg:col-span-3 flex flex-col gap-8">
-            <div className="bg-gray-800/70 p-6 rounded-2xl shadow-lg border border-gray-700">
-              <h2 className="text-xl font-bold mb-4 flex items-center gap-3"><span className="bg-yellow-400 text-gray-900 rounded-full w-8 h-8 flex items-center justify-center font-bold text-lg">1</span> Upload Base Image</h2>
-              {originalImage ? (
-                <div>
-                  <ImagePreview imageSrc={originalImage} altText="Original Image" aspectRatio="1:1" />
-                  <div className="flex flex-wrap gap-2 mt-4">
-                    <Button onClick={() => setIsCropperOpen(true)} variant="secondary"><CropIcon className="w-5 h-5 mr-2" /> Crop</Button>
-                    <Button onClick={() => setIsEditorOpen(true)} variant="secondary"><AdjustmentsHorizontalIcon className="w-5 h-5 mr-2" /> Adjust</Button>
-                    <Button onClick={handleClearOriginalImage} variant="secondary"><TrashIcon className="w-5 h-5 mr-2" />Remove</Button>
-                  </div>
+          <div className="lg:col-span-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Input Image Panel */}
+              <div className="bg-gray-800/70 p-6 rounded-2xl shadow-lg border border-gray-700 flex flex-col">
+                <h2 className="text-xl font-bold mb-4 flex items-center gap-3"><span className="bg-yellow-400 text-gray-900 rounded-full w-8 h-8 flex items-center justify-center font-bold text-lg">1</span> Input Image</h2>
+                <div className="flex-grow flex flex-col">
+                  {originalImage ? (
+                    <div>
+                      <ImagePreview imageSrc={originalImage} altText="Original Image" aspectRatio="1:1" />
+                      <div className="flex flex-wrap gap-2 mt-4">
+                        <Button onClick={() => setIsCropperOpen(true)} variant="secondary"><CropIcon className="w-5 h-5 mr-2" /> Crop</Button>
+                        <Button onClick={() => setIsEditorOpen(true)} variant="secondary"><AdjustmentsHorizontalIcon className="w-5 h-5 mr-2" /> Adjust</Button>
+                        <Button onClick={handleClearOriginalImage} variant="secondary"><TrashIcon className="w-5 h-5 mr-2" />Remove</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex-grow flex flex-col">
+                      <ImageUploader onImageUpload={handleImageUpload} onError={setError} />
+                      <PlaceholderGallery placeholders={placeholders} onSelect={handleSelectPlaceholder} />
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <>
-                  <ImageUploader onImageUpload={handleImageUpload} onError={setError} />
-                  <PlaceholderGallery placeholders={placeholders} onSelect={handleSelectPlaceholder} />
-                </>
-              )}
-            </div>
+              </div>
 
-            <div className="bg-gray-800/70 p-6 rounded-2xl shadow-lg border border-gray-700">
-               <h2 className="text-xl font-bold mb-4 flex items-center gap-3"><span className="bg-yellow-400 text-gray-900 rounded-full w-8 h-8 flex items-center justify-center font-bold text-lg">3</span> View Result</h2>
-              <ImagePreview 
-                imageSrc={transformedImage} 
-                altText="Transformed Image" 
-                isLoading={isLoading}
-                aspectRatio={settings.aspectRatio}
-              />
-              {transformedImage && !isLoading && (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Button onClick={handleDownload}><DownloadIcon className="w-5 h-5 mr-2" /> Download</Button>
-                  <Button onClick={handleUseAsInput} variant="secondary"><RecycleIcon className="w-5 h-5 mr-2" /> Use as Input</Button>
-                </div>
-              )}
+              {/* Generated Image Panel */}
+              <div className="bg-gray-800/70 p-6 rounded-2xl shadow-lg border border-gray-700">
+                <h2 className="text-xl font-bold mb-4">Generated Image</h2>
+                <ImagePreview 
+                  imageSrc={transformedImage} 
+                  altText="Transformed Image" 
+                  isLoading={isLoading}
+                  aspectRatio={settings.aspectRatio}
+                />
+                {transformedImage && !isLoading && (
+                   <div className="mt-4 flex flex-col gap-4">
+                      <div className="flex flex-wrap gap-2">
+                          <Button onClick={handleDownload}><DownloadIcon className="w-5 h-5 mr-2" /> Download Image</Button>
+                          <Button onClick={handleUseAsInput} variant="secondary"><RecycleIcon className="w-5 h-5 mr-2" /> Use as Input</Button>
+                      </div>
+  
+                      {settings.mode === 'figurine' && (
+                          <div className="p-4 bg-gray-700/50 rounded-lg border border-gray-600 space-y-4 animate-fade-in-scale">
+                              <h4 className="text-md font-semibold text-gray-200">
+                                  <Tooltip text="This is an experimental feature that generates a basic 3D mesh. The quality may vary greatly.">
+                                      Generate 3D Model (.obj)
+                                  </Tooltip>
+                              </h4>
+                              
+                              <div>
+                                <label className="block text-sm font-medium text-gray-300 mb-2">
+                                  <Tooltip text="Controls the complexity of the generated 3D mesh. 'High' will attempt more vertices and faces, but may fail on complex subjects.">
+                                    Model Detail Level
+                                  </Tooltip>
+                                </label>
+                                <div className="grid grid-cols-3 gap-2">
+                                  {MODEL_DETAIL_LEVELS.map((level) => (
+                                    <Button 
+                                      key={level} 
+                                      onClick={() => setModelDetailLevel(level)} 
+                                      variant={modelDetailLevel === level ? 'primary' : 'secondary'} 
+                                      className="!py-2 !text-sm"
+                                    >
+                                      {level}
+                                    </Button>
+                                  ))}
+                                </div>
+                              </div>
+  
+                              <Button onClick={handleGenerate3dModelClick} variant="secondary" disabled={isGenerating3dModel} className="w-full">
+                                  <CubeIcon className="w-5 h-5 mr-2" />
+                                  {isGenerating3dModel ? 'Generating Model...' : 'Generate 3D Model'}
+                              </Button>
+  
+                              {isGenerating3dModel && <p className="text-xs text-center text-gray-400">Model generation can take up to a minute...</p>}
+  
+                              {modelError && (
+                                  <div className="bg-red-800/50 border border-red-700 text-red-200 px-3 py-2 rounded-lg text-sm" role="alert">
+                                      <strong>3D Model Error:</strong> {modelError}
+                                  </div>
+                              )}
+                              
+                              {modelData && (
+                                  <div className="p-3 bg-gray-900/50 rounded-lg flex items-center justify-between animate-fade-in-scale">
+                                      <p className="text-sm text-gray-300">🎉 3D model data generated!</p>
+                                      <Button onClick={handleDownloadModel} className="!py-2 !px-4 !text-sm">
+                                          <DownloadIcon className="w-4 h-4 mr-2" />
+                                          Download .OBJ
+                                      </Button>
+                                  </div>
+                              )}
+                          </div>
+                      )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-
+          
           <div className="lg:col-span-2 bg-gray-800/70 p-6 rounded-2xl shadow-lg border border-gray-700 self-start">
             <h2 className="text-xl font-bold mb-4 flex items-center gap-3"><span className="bg-yellow-400 text-gray-900 rounded-full w-8 h-8 flex items-center justify-center font-bold text-lg">2</span> Customize</h2>
             <div className="space-y-6">
@@ -643,7 +747,7 @@ const App: React.FC = () => {
                     <Button onClick={redo} disabled={!canRedo} variant="secondary" className="!p-3" title="Redo"><RedoIcon className="w-5 h-5"/></Button>
                 </div>
                 <div>
-                  <Button onClick={handleGenerateClick} disabled={!originalImage || isLoading} className="w-full">
+                  <Button onClick={handleGenerateClick} disabled={!originalImage || isLoading || isGenerating3dModel} className="w-full">
                     <SparklesIcon className="w-6 h-6 mr-2"/>
                     {isLoading ? 'Generating...' : 'Generate Image'}
                   </Button>

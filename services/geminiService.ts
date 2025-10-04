@@ -21,6 +21,8 @@ const safetySettings = [
     },
 ];
 
+export type ModelDetailLevel = 'Low' | 'Medium' | 'High';
+
 /**
  * Transforms an image using the Gemini API based on a provided prompt.
  * @param base64ImageData The base64 encoded image data URL.
@@ -65,12 +67,39 @@ export const transformImage = async (
                 safetySettings,
             },
         });
+        
+        if (response.promptFeedback?.blockReason) {
+            throw new Error(`The request was blocked. Reason: ${response.promptFeedback.blockReason}. Please adjust your prompt or image.`);
+        }
+        
+        const candidate = response.candidates?.[0];
+        if (!candidate) {
+            throw new Error('The AI model did not return a response. Please try again.');
+        }
 
+        if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+             if (candidate.finishReason === 'SAFETY' || candidate.finishReason === 'IMAGE_SAFETY') {
+                 let detailedMessage = 'Please adjust your prompt or image and try again.';
+                 if (candidate.safetyRatings && candidate.safetyRatings.length > 0) {
+                    const highSeverityCategories = candidate.safetyRatings
+                        .filter(rating => rating.probability !== 'NEGLIGIBLE' && rating.probability !== 'LOW')
+                        .map(rating => rating.category.replace('HARM_CATEGORY_', ''))
+                        .join(', ');
+                    
+                    if (highSeverityCategories) {
+                        detailedMessage = `Potential issues detected in the following categories: ${highSeverityCategories}.`;
+                    }
+                 }
+                 throw new Error(`Request blocked by safety filters. ${detailedMessage}`);
+             }
+             throw new Error(`Image generation failed. Reason: ${candidate.finishReason}.`);
+        }
+        
         let generatedText = '';
         let generatedImage = '';
 
-        if (response.candidates && response.candidates.length > 0 && response.candidates[0].content && response.candidates[0].content.parts) {
-             for (const part of response.candidates[0].content.parts) {
+        if (candidate.content && candidate.content.parts) {
+            for (const part of candidate.content.parts) {
                 if (part.text) {
                     generatedText = part.text;
                 } else if (part.inlineData) {
@@ -80,51 +109,115 @@ export const transformImage = async (
         }
        
         if (!generatedImage) {
-            const rejectionReason = response.candidates?.[0]?.finishReason;
-            const safetyRatings = response.candidates?.[0]?.safetyRatings;
-            console.error('Image generation failed.', { rejectionReason, safetyRatings });
-            let message = 'The AI model did not return an image.';
-
-            if (rejectionReason && String(rejectionReason).toUpperCase().includes('SAFETY')) {
-                message = 'The request was blocked for safety reasons. Please adjust your prompt or image and try again.';
-            } else if (typeof rejectionReason === 'string' && rejectionReason) {
-                message = `Image generation failed. Reason: ${rejectionReason}`;
-            } else if (rejectionReason) {
-               message = `Image generation failed for an unknown reason. Check the console for details.`;
-            }
-            throw new Error(message);
-       }
+            throw new Error('The AI model returned an unexpected response format (no image found).');
+        }
 
         return { text: generatedText, image: generatedImage };
 
     } catch (error: unknown) {
         console.error("Gemini API call failed:", error);
         
-        let errorMessage = "An unexpected error occurred.";
+        let errorMessage = "An unexpected error occurred during image generation.";
 
         if (error instanceof Error) {
             errorMessage = error.message;
-        } else if (typeof error === 'string') {
-            errorMessage = error;
-        } else if (error && typeof error === 'object' && error !== null) {
-            if ('message' in error && typeof (error as any).message === 'string' && (error as any).message) {
-                errorMessage = (error as any).message;
-            } else {
-                const errorStr = error.toString();
-                if (errorStr && errorStr !== '[object Object]') {
-                    errorMessage = errorStr;
-                } else {
-                    errorMessage = 'An unknown error occurred. Check the console for details.';
-                }
-            }
+        } else if (error && typeof error === 'object' && 'message' in error) {
+            errorMessage = String((error as any).message);
         }
 
-        // Standardize common API errors into user-friendly messages
         if (errorMessage.includes('429') || /quota|RESOURCE_EXHAUSTED/i.test(errorMessage)) {
             throw new Error("The service is currently busy due to high demand. Please wait a moment and try again.");
         }
         
-        // Re-throw a clean error for the UI to display
+        throw new Error(errorMessage);
+    }
+};
+
+/**
+ * Generates a 3D model data string (OBJ format) based on a text prompt.
+ * @param basePrompt The text prompt describing the desired model.
+ * @param detailLevel The desired level of detail for the model.
+ * @returns A promise that resolves to a string containing the raw OBJ file content.
+ */
+export const generate3dModel = async (
+    basePrompt: string,
+    detailLevel: ModelDetailLevel,
+): Promise<string> => {
+    try {
+        let detailInstruction: string;
+        switch (detailLevel) {
+            case 'Low':
+                detailInstruction = "a very simplified, low-polygon representation with minimal vertices and faces.";
+                break;
+            case 'High':
+                detailInstruction = "a more intricate and detailed model with a higher polygon count, focusing on capturing key shapes and forms.";
+                break;
+            case 'Medium':
+            default:
+                detailInstruction = "a simplified representation suitable for a starting point.";
+                break;
+        }
+
+        const modelPrompt = `Based on the following description, generate a 3D model in the Wavefront OBJ file format. Provide ONLY the raw text content for the .obj file. The output must start directly with vertex data (e.g., 'v 1.0 1.0 1.0'). Do not include any surrounding text, explanations, or markdown code blocks. The model should be ${detailInstruction} Here is the description: "${basePrompt}"`;
+
+        const model = 'gemini-2.5-flash';
+
+        const response: GenerateContentResponse = await ai.models.generateContent({
+            model,
+            contents: modelPrompt,
+            config: {
+                safetySettings,
+            },
+        });
+        
+        if (response.promptFeedback?.blockReason) {
+            throw new Error(`The request was blocked. Reason: ${response.promptFeedback.blockReason}. Please adjust your prompt.`);
+        }
+        const candidate = response.candidates?.[0];
+        if (!candidate) {
+            throw new Error('The AI model did not return a response for the 3D model.');
+        }
+        if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+             if (candidate.finishReason === 'SAFETY' || candidate.finishReason === 'IMAGE_SAFETY') {
+                 let detailedMessage = 'Please adjust your prompt and try again.';
+                 if (candidate.safetyRatings && candidate.safetyRatings.length > 0) {
+                    const highSeverityCategories = candidate.safetyRatings
+                        .filter(rating => rating.probability !== 'NEGLIGIBLE' && rating.probability !== 'LOW')
+                        .map(rating => rating.category.replace('HARM_CATEGORY_', ''))
+                        .join(', ');
+                    
+                    if (highSeverityCategories) {
+                        detailedMessage = `Potential issues detected in the following categories: ${highSeverityCategories}.`;
+                    }
+                 }
+                 throw new Error(`3D model request blocked by safety filters. ${detailedMessage}`);
+             }
+             throw new Error(`3D model generation failed. Reason: ${candidate.finishReason}.`);
+        }
+
+        const modelData = response.text;
+
+        if (!modelData || !modelData.trim().startsWith('v')) {
+             throw new Error('The AI model did not return valid OBJ data. The concept might be too complex for 3D generation.');
+        }
+
+        return modelData;
+
+    } catch (error: unknown) {
+        console.error("Gemini API call for 3D model failed:", error);
+        
+        let errorMessage = "An unexpected error occurred during 3D model generation.";
+
+        if (error instanceof Error) {
+            errorMessage = error.message;
+        } else if (error && typeof error === 'object' && 'message' in error) {
+            errorMessage = String((error as any).message);
+        }
+
+        if (errorMessage.includes('429') || /quota|RESOURCE_EXHAUSTED/i.test(errorMessage)) {
+            throw new Error("The service is currently busy due to high demand. Please wait a moment and try again.");
+        }
+        
         throw new Error(errorMessage);
     }
 };
